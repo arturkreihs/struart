@@ -1,6 +1,7 @@
 use serial2::SerialPort;
 use thiserror::Error;
 use std::sync::RwLock;
+use std::io::ErrorKind;
 
 #[derive(Error, Debug)]
 pub enum StruartError {
@@ -43,18 +44,24 @@ impl Struart {
 
     pub fn read<F: Fn(&str)>(&self, cb: F) -> Result<(), StruartError> {
         let mut buf = [0u8; 256];
-        while let Ok(len) = self.port.read(&mut buf) {
-            for byte in buf.iter().take(len) {
-                match byte {
-                    0x0d => { // newline char
-                        cb(&String::from_utf8_lossy(&self.buffer.read().map_err(|_| StruartError::RwLockPoisoned)?));
-                        self.buffer.write().map_err(|_| StruartError::RwLockPoisoned)?.clear();
-                    },
-                    0x20..=0x7e => self.buffer.write().map_err(|_| StruartError::RwLockPoisoned)?.push(*byte), // printable char
-                    _ => continue,
+        match self.port.read(&mut buf) {
+            Ok(len) => {
+                for byte in buf.iter().take(len) {
+                    match byte {
+                        0x0d => { // newline char
+                            cb(&String::from_utf8_lossy(&self.buffer.read().map_err(|_| StruartError::RwLockPoisoned)?));
+                            self.buffer.write().map_err(|_| StruartError::RwLockPoisoned)?.clear();
+                        },
+                        0x20..=0x7e => self.buffer.write().map_err(|_| StruartError::RwLockPoisoned)?.push(*byte), // printable char
+                        _ => continue,
+                    }
                 }
+                Ok(())
+            },
+            Err(e) => match e.kind() {
+                ErrorKind::TimedOut => Ok(()),
+                _ => Err(StruartError::IO(e))
             }
         }
-        Ok(())
     }
 }
